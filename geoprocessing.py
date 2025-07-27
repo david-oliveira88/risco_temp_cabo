@@ -294,12 +294,17 @@ class GeoProcessor:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 
+                # Ajustar variograma automaticamente
+                melhor_modelo = self._ajustar_variograma_automatico(
+                    coords_estacoes, valores_estacoes, variavel
+                )
+                
                 # Criar objeto de krigagem
                 OK = OrdinaryKriging(
                     coords_estacoes[:, 0],  # X coordinates
                     coords_estacoes[:, 1],  # Y coordinates
                     valores_estacoes,       # Values
-                    variogram_model=config.MODELO_VARIOGRAMA,
+                    variogram_model=melhor_modelo,
                     verbose=False,
                     enable_plotting=False,
                     coordinates_type='euclidean'
@@ -325,6 +330,14 @@ class GeoProcessor:
                 # Garantir que variâncias sejam positivas
                 ss_pred = np.maximum(ss_pred, 0)
                 
+                # Validar valores físicos por variável
+                if variavel == 'radiacao_global':
+                    z_pred = self._validar_radiacao_krigagem(z_pred)
+                elif variavel == 'temperatura_ar':
+                    z_pred = self._validar_temperatura_krigagem(z_pred)
+                elif variavel in ['vento_u', 'vento_v', 'vento_velocidade']:
+                    z_pred = self._validar_vento_krigagem(z_pred, variavel)
+                
                 return {
                     'media': z_pred,
                     'variancia': ss_pred,
@@ -334,6 +347,233 @@ class GeoProcessor:
         except Exception as e:
             logger.error(f"Erro na krigagem de {variavel}: {e}")
             raise
+    
+    def _ajustar_variograma_automatico(self, coords_estacoes, valores_estacoes, variavel):
+        """
+        Ajusta automaticamente o modelo de variograma testando diferentes opções.
+        
+        Args:
+            coords_estacoes (np.array): Coordenadas das estações
+            valores_estacoes (np.array): Valores da variável
+            variavel (str): Nome da variável
+            
+        Returns:
+            str: Melhor modelo de variograma
+        """
+        # Modelos específicos por variável - radiação tem comportamento especial
+        if variavel == 'radiacao_global':
+            # Para radiação, preferir modelos mais suaves que reduzem variância
+            modelos_testar = ['gaussian', 'spherical', 'exponential', 'linear']
+        else:
+            modelos_testar = ['linear', 'power', 'gaussian', 'spherical', 'exponential']
+            
+        melhor_modelo = config.MODELO_VARIOGRAMA  # Default
+        melhor_score = float('inf')
+        melhor_variancia_media = float('inf')
+        
+        # Se temos muitas poucas estações, usar modelo linear
+        if len(coords_estacoes) < 4:
+            return 'linear'
+        
+        # Calcular variância dos dados para normalização
+        variancia_dados = np.var(valores_estacoes)
+        
+        # Dividir dados em treino e validação (cross-validation simples)
+        n_estacoes = len(coords_estacoes)
+        indices = np.arange(n_estacoes)
+        np.random.shuffle(indices)
+        
+        # Usar 80% para treino, 20% para validação
+        n_treino = max(2, int(0.8 * n_estacoes))
+        indices_treino = indices[:n_treino]
+        indices_validacao = indices[n_treino:]
+        
+        if len(indices_validacao) == 0:
+            return melhor_modelo
+        
+        coords_treino = coords_estacoes[indices_treino]
+        valores_treino = valores_estacoes[indices_treino]
+        coords_validacao = coords_estacoes[indices_validacao]
+        valores_validacao = valores_estacoes[indices_validacao]
+        
+        # Testar cada modelo
+        for modelo in modelos_testar:
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    
+                    # Criar krigagem com dados de treino
+                    OK = OrdinaryKriging(
+                        coords_treino[:, 0],
+                        coords_treino[:, 1],
+                        valores_treino,
+                        variogram_model=modelo,
+                        verbose=False,
+                        enable_plotting=False,
+                        coordinates_type='euclidean'
+                    )
+                    
+                    # Predizer nos pontos de validação
+                    pred_validacao, var_validacao = OK.execute(
+                        'points',
+                        coords_validacao[:, 0],
+                        coords_validacao[:, 1]
+                    )
+                    
+                    if hasattr(pred_validacao, 'data'):
+                        pred_validacao = pred_validacao.data
+                    if hasattr(var_validacao, 'data'):
+                        var_validacao = var_validacao.data
+                    
+                    # Calcular métricas
+                    if not np.any(np.isnan(pred_validacao)) and not np.any(np.isnan(var_validacao)):
+                        rmse = np.sqrt(mean_squared_error(valores_validacao, pred_validacao))
+                        variancia_media = np.mean(var_validacao)
+                        
+                        # Para radiação, penalizar modelos com variância muito alta
+                        if variavel == 'radiacao_global':
+                            # Score combinado: RMSE + penalidade por variância alta
+                            penalidade_variancia = min(variancia_media / variancia_dados, 10.0)
+                            score_combinado = rmse * (1 + 0.1 * penalidade_variancia)
+                        else:
+                            score_combinado = rmse
+                        
+                        if score_combinado < melhor_score:
+                            melhor_score = score_combinado
+                            melhor_modelo = modelo
+                            melhor_variancia_media = variancia_media
+                            
+            except Exception:
+                continue
+        
+        # Log apenas para primeira vez por variável (evitar spam)
+        if not hasattr(self, '_variograma_logged'):
+            self._variograma_logged = set()
+        
+        if variavel not in self._variograma_logged:
+            if variavel == 'radiacao_global':
+                logger.info(f"Melhor modelo de variograma para {variavel}: {melhor_modelo} "
+                           f"(RMSE: {melhor_score:.3f}, Var.média: {melhor_variancia_media:.1f})")
+            else:
+                logger.info(f"Melhor modelo de variograma para {variavel}: {melhor_modelo} (RMSE: {melhor_score:.3f})")
+            self._variograma_logged.add(variavel)
+        
+        return melhor_modelo
+
+    def _validar_radiacao_krigagem(self, valores_radiacao):
+        """
+        Valida valores de radiação da krigagem e anula valores fisicamente impossíveis.
+        
+        Args:
+            valores_radiacao (np.array): Valores de radiação interpolados
+            
+        Returns:
+            np.array: Valores validados (valores inválidos substituídos por NaN)
+        """
+        valores_validados = valores_radiacao.copy()
+        
+        # Limites físicos para radiação solar (W/m²)
+        # Radiação máxima teórica ao nível do mar é ~1400 W/m²
+        # Radiação mínima é 0 (não pode ser negativa)
+        limite_min = 0.0
+        limite_max = 1400.0
+        
+        # Contar valores inválidos antes da correção
+        mask_invalidos = (valores_validados < limite_min) | (valores_validados > limite_max)
+        num_invalidos = np.sum(mask_invalidos)
+        
+        if num_invalidos > 0:
+            # Log dos valores problemáticos para análise
+            valores_problematicos = valores_validados[mask_invalidos]
+            logger.warning(f"Krigagem de radiação: {num_invalidos} valores inválidos detectados")
+            logger.warning(f"Valores problemáticos: min={valores_problematicos.min():.1f}, "
+                          f"max={valores_problematicos.max():.1f} W/m²")
+            
+            # Substituir valores inválidos por NaN
+            valores_validados[mask_invalidos] = np.nan
+            
+            logger.info(f"Valores de radiação fora do intervalo [{limite_min}, {limite_max}] W/m² "
+                       f"foram anulados ({num_invalidos} pontos)")
+        
+        return valores_validados
+
+    def _validar_temperatura_krigagem(self, valores_temperatura):
+        """
+        Valida valores de temperatura da krigagem e anula valores fisicamente impossíveis.
+        
+        Args:
+            valores_temperatura (np.array): Valores de temperatura interpolados
+            
+        Returns:
+            np.array: Valores validados (valores inválidos substituídos por NaN)
+        """
+        valores_validados = valores_temperatura.copy()
+        
+        # Limites físicos para temperatura do ar (°C)
+        # Considerando faixa realista para condições meteorológicas no Brasil
+        limite_min = -10.0  # Temperatura mínima extrema
+        limite_max = 55.0   # Temperatura máxima extrema
+        
+        # Contar valores inválidos antes da correção
+        mask_invalidos = (valores_validados < limite_min) | (valores_validados > limite_max)
+        num_invalidos = np.sum(mask_invalidos)
+        
+        if num_invalidos > 0:
+            # Log dos valores problemáticos para análise
+            valores_problematicos = valores_validados[mask_invalidos]
+            logger.warning(f"Krigagem de temperatura: {num_invalidos} valores inválidos detectados")
+            logger.warning(f"Valores problemáticos: min={valores_problematicos.min():.1f}, "
+                          f"max={valores_problematicos.max():.1f} °C")
+            
+            # Substituir valores inválidos por NaN
+            valores_validados[mask_invalidos] = np.nan
+            
+            logger.info(f"Valores de temperatura fora do intervalo [{limite_min}, {limite_max}] °C "
+                       f"foram anulados ({num_invalidos} pontos)")
+        
+        return valores_validados
+
+    def _validar_vento_krigagem(self, valores_vento, variavel):
+        """
+        Valida valores de vento da krigagem e anula valores fisicamente impossíveis.
+        
+        Args:
+            valores_vento (np.array): Valores de vento interpolados
+            variavel (str): Nome da variável (vento_u, vento_v, vento_velocidade)
+            
+        Returns:
+            np.array: Valores validados (valores inválidos substituídos por NaN)
+        """
+        valores_validados = valores_vento.copy()
+        
+        # Limites físicos para vento
+        if variavel == 'vento_velocidade':
+            # Velocidade do vento não pode ser negativa e raramente excede 50 m/s
+            limite_min = 0.0
+            limite_max = 50.0
+        else:  # vento_u, vento_v (componentes)
+            # Componentes podem ser negativas, mas limitadas por velocidade máxima
+            limite_min = -50.0
+            limite_max = 50.0
+        
+        # Contar valores inválidos antes da correção
+        mask_invalidos = (valores_validados < limite_min) | (valores_validados > limite_max)
+        num_invalidos = np.sum(mask_invalidos)
+        
+        if num_invalidos > 0:
+            # Log dos valores problemáticos para análise
+            valores_problematicos = valores_validados[mask_invalidos]
+            logger.warning(f"Krigagem de {variavel}: {num_invalidos} valores inválidos detectados")
+            logger.warning(f"Valores problemáticos: min={valores_problematicos.min():.1f}, "
+                          f"max={valores_problematicos.max():.1f} m/s")
+            
+            # Substituir valores inválidos por NaN
+            valores_validados[mask_invalidos] = np.nan
+            
+            logger.info(f"Valores de {variavel} fora do intervalo [{limite_min}, {limite_max}] m/s "
+                       f"foram anulados ({num_invalidos} pontos)")
+        
+        return valores_validados
 
     def _criar_resultado_nan(self, variaveis_ambientais, num_pontos):
         """Cria resultado preenchido com NaN para todas as variáveis."""

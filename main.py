@@ -269,8 +269,9 @@ class AnalisadorRiscoTermico:
         
         # Iterar sobre cada ponto da linha
         for idx_ponto, ponto in self.pontos_linha.iterrows():
-            if idx_ponto % 10 == 0:  # Log a cada 10 pontos
-                self.logger.info(f"Processando ponto {idx_ponto + 1}/{len(self.pontos_linha)}")
+            self.logger.info(f"=== PONTO {idx_ponto + 1}/{len(self.pontos_linha)} - Coordenadas: ({ponto['latitude']:.4f}, {ponto['longitude']:.4f}) ===")
+            
+            temperaturas_calculadas_ponto = 0
             
             # Iterar sobre cada hora
             for hora, dados_hora_krigagem in self.resultados_krigagem.items():
@@ -285,6 +286,13 @@ class AnalisadorRiscoTermico:
                         dados_hora_krigagem, idx_ponto
                     )
                     
+                    # Log dos valores da krigagem
+                    data_hora = pd.to_datetime(hora)
+                    self.logger.info(f"Timestamp: {data_hora.strftime('%Y-%m-%d %H:%M')} - "
+                                   f"Temp: {medias_ambientais['temperatura_ar']:.1f}°C, "
+                                   f"Rad: {medias_ambientais['radiacao_global']:.0f}W/m², "
+                                   f"Vento: {np.sqrt(medias_ambientais['vento_u']**2 + medias_ambientais['vento_v']**2):.1f}m/s")
+                    
                     # Executar simulação Monte Carlo
                     resultado_mc = self.simulador_mc.executar_simulacao(
                         medias_ambientais=medias_ambientais,
@@ -293,6 +301,8 @@ class AnalisadorRiscoTermico:
                         corrente=corrente_operacao,
                         num_iteracoes=config.NUM_ITERACOES_MC
                     )
+                    
+                    temperaturas_calculadas_ponto += 1
                     
                     # Análise de risco
                     if resultado_mc['iteracoes_validas'] > 0:
@@ -325,6 +335,10 @@ class AnalisadorRiscoTermico:
                             'radiacao_media': medias_ambientais['radiacao_global'],
                             'vento_u_media': medias_ambientais['vento_u'],
                             'vento_v_media': medias_ambientais['vento_v'],
+                            'temperatura_ar_var': desvios_ambientais['temperatura_ar']**2,
+                            'radiacao_var': desvios_ambientais['radiacao_global']**2,
+                            'vento_u_var': desvios_ambientais['vento_u']**2,
+                            'vento_v_var': desvios_ambientais['vento_v']**2,
                             'temperatura_condutor_media': resultado_mc['estatisticas']['media'],
                             'temperatura_condutor_p90': temp_p90,
                             'temperatura_condutor_p95': resultado_mc['estatisticas']['percentil_95'],
@@ -339,11 +353,14 @@ class AnalisadorRiscoTermico:
                 
                 combinacoes_processadas += 1
                 
-                # Log de progresso
+                # Log de progresso a cada 1000 cálculos
                 if combinacoes_processadas % 1000 == 0:
                     progresso = 100 * combinacoes_processadas / total_combinacoes
                     self.logger.info(f"Progresso geral: {progresso:.1f}% "
                                    f"({combinacoes_processadas}/{total_combinacoes})")
+            
+            # Log do progresso por ponto
+            self.logger.info(f"Ponto {idx_ponto + 1} concluído: {temperaturas_calculadas_ponto} temperaturas calculadas")
         
         self.logger.info(f"Simulações concluídas: {len(self.resultados_finais)} resultados válidos")
 
