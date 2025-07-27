@@ -1,7 +1,43 @@
-pandas
-openpyxl
-numpy
-scipy
-pyproj
-pykrige
-matplotlib
+# Geração de documentação
+sphinx>=7.1.0,<8.0.0
+sphinx-rtd-theme>=1.3.0,<2.0.0
+
+# ==============================================================================
+# DEPENDÊNCIAS PARA PERFORMANCE (OPCIONAL)
+# ==============================================================================
+
+# Paralelização
+joblib>=1.3.0,<2.0.0
+multiprocessing-logging>=0.3.4,<1.0.0
+
+# Otimização numérica
+numba>=0.57.0,<1.0.0
+
+# ==============================================================================
+# INSTALAÇÃO RECOMENDADA
+# ==============================================================================
+#
+# Para instalar apenas as dependências básicas:
+# pip install pandas numpy openpyxl scipy pyproj pykrige matplotlib
+#
+# Para instalar todas as dependências:
+# pip install -r requirements.txt
+#
+# Para desenvolvimento:
+# pip install -r requirements.txt
+# pip install pytest pytest-cov flake8 black
+#
+# ==============================================================================
+# NOTAS SOBRE VERSÕES
+# ==============================================================================
+#
+# - pandas: Versão 2.0+ para melhor performance e funcionalidades
+# - numpy: Compatibilidade com pandas 2.0+
+# - scipy: Solvers numéricos para equações térmicas
+# - pyproj: Transformações de coordenadas geográficas
+# - pykrige: Interpolação espacial por krigagem ordinária
+# - matplotlib: Visualização de resultados (opcional)
+#
+# Testado com Python 3.9, 3.10, 3.11 e 3.12
+#
+# ==============================================================================
