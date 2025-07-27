@@ -1,6 +1,40 @@
-# Geração de documentação
-sphinx>=7.1.0,<8.0.0
-sphinx-rtd-theme>=1.3.0,<2.0.0
+# ==============================================================================
+# DEPENDÊNCIAS BÁSICAS DO ANALISADOR DE RISCO TÉRMICO
+# ==============================================================================
+
+# Análise de dados
+pandas>=2.0.0,<3.0.0
+numpy>=1.24.0,<2.0.0
+
+# Leitura de arquivos Excel
+openpyxl>=3.1.0,<4.0.0
+
+# Computação científica e solvers numéricos
+scipy>=1.10.0,<2.0.0
+
+# Transformações de coordenadas geográficas
+pyproj>=3.4.0,<4.0.0
+
+# Interpolação espacial (Krigagem)
+pykrige>=1.7.0,<2.0.0
+
+# Machine learning (para validação da krigagem)
+scikit-learn>=1.3.0,<2.0.0
+
+# Visualização de resultados
+matplotlib>=3.7.0,<4.0.0
+
+# ==============================================================================
+# DEPENDÊNCIAS PARA DESENVOLVIMENTO E TESTES
+# ==============================================================================
+
+# Testes
+pytest>=7.4.0,<8.0.0
+pytest-cov>=4.1.0,<5.0.0
+
+# Formatação de código
+black>=23.0.0,<24.0.0
+flake8>=6.0.0,<7.0.0
 
 # ==============================================================================
 # DEPENDÊNCIAS PARA PERFORMANCE (OPCIONAL)
@@ -8,35 +42,22 @@ sphinx-rtd-theme>=1.3.0,<2.0.0
 
 # Paralelização
 joblib>=1.3.0,<2.0.0
-multiprocessing-logging>=0.3.4,<1.0.0
 
 # Otimização numérica
 numba>=0.57.0,<1.0.0
 
 # ==============================================================================
-# INSTALAÇÃO RECOMENDADA
+# NOTAS SOBRE INSTALAÇÃO
 # ==============================================================================
 #
 # Para instalar apenas as dependências básicas:
-# pip install pandas numpy openpyxl scipy pyproj pykrige matplotlib
+# pip install pandas numpy openpyxl scipy pyproj pykrige matplotlib scikit-learn
 #
 # Para instalar todas as dependências:
 # pip install -r requirements.txt
 #
 # Para desenvolvimento:
 # pip install -r requirements.txt
-# pip install pytest pytest-cov flake8 black
-#
-# ==============================================================================
-# NOTAS SOBRE VERSÕES
-# ==============================================================================
-#
-# - pandas: Versão 2.0+ para melhor performance e funcionalidades
-# - numpy: Compatibilidade com pandas 2.0+
-# - scipy: Solvers numéricos para equações térmicas
-# - pyproj: Transformações de coordenadas geográficas
-# - pykrige: Interpolação espacial por krigagem ordinária
-# - matplotlib: Visualização de resultados (opcional)
 #
 # Testado com Python 3.9, 3.10, 3.11 e 3.12
 #

@@ -7,7 +7,9 @@ import re
 import traceback
 import logging
 from datetime import datetime
+from typing import Dict, List, Tuple, Optional, Any
 import config
+from validators import DataValidator
 
 # Configurar logging
 logging.basicConfig(level=getattr(logging, config.LOG_LEVEL), format=config.LOG_FORMAT)
@@ -21,6 +23,8 @@ class DataLoader:
         self.dados_linha = None
         self.dados_estacoes = {}
         self.dados_sincronizados = None
+        self.validator = DataValidator()
+        self.relatorios_validacao = []
         
     def carregar_todos_dados(self):
         """Carrega todos os dados necessários para a análise."""
@@ -52,17 +56,17 @@ class DataLoader:
             with open(config.ARQUIVO_PARAMETROS_CABO, 'r', encoding='utf-8') as f:
                 parametros = json.load(f)
             
-            # Validação dos parâmetros obrigatórios
-            for key in config.PARAMETROS_CABO_OBRIGATORIOS:
-                if key not in parametros:
-                    raise ValueError(f"Parâmetro obrigatório '{key}' não encontrado no arquivo")
-                
-                # Validação de tipos e valores
-                valor = parametros[key]
-                if not isinstance(valor, (int, float)) or valor <= 0:
-                    raise ValueError(f"Parâmetro '{key}' deve ser um número positivo")
+            # Usar o validador robusto
+            eh_valido, erros = self.validator.validar_parametros_condutor(parametros)
             
-            logger.info("Parâmetros do cabo carregados e validados")
+            if not eh_valido:
+                erro_msg = "Erros na validação dos parâmetros do cabo:\n" + "\n".join(erros)
+                raise ValueError(erro_msg)
+            
+            logger.info("Parâmetros do cabo carregados e validados com sucesso")
+            logger.info(f"Condutor: {parametros.get('nome_condutor', 'Não especificado')}")
+            logger.info(f"Diâmetro: {parametros['diametro']*1000:.1f} mm")
+            
             return parametros
             
         except FileNotFoundError:
@@ -82,25 +86,20 @@ class DataLoader:
         try:
             dados_linha = pd.read_excel(config.ARQUIVO_TRASSADO_LINHA, engine='openpyxl')
             
-            # Validação das colunas obrigatórias
-            for col in config.COLUNAS_TRASSADO_OBRIGATORIAS:
-                if col not in dados_linha.columns:
-                    raise ValueError(f"Coluna obrigatória '{col}' não encontrada")
+            # Usar validador robusto
+            eh_valido, erros = self.validator.validar_dados_linha(dados_linha)
             
-            # Validação de dados
-            if dados_linha.empty:
-                raise ValueError("Arquivo de traçado está vazio")
+            if not eh_valido:
+                erro_msg = "Erros na validação dos dados da linha:\n" + "\n".join(erros)
+                raise ValueError(erro_msg)
             
-            # Validação de coordenadas
-            lat_validas = (-90 <= dados_linha['latitude']) & (dados_linha['latitude'] <= 90)
-            lon_validas = (-180 <= dados_linha['longitude']) & (dados_linha['longitude'] <= 180)
+            logger.info(f"Dados da linha carregados e validados: {len(dados_linha)} pontos")
             
-            if not lat_validas.all():
-                raise ValueError("Latitudes inválidas encontradas")
-            if not lon_validas.all():
-                raise ValueError("Longitudes inválidas encontradas")
+            # Informações adicionais
+            if 'Progressiva' in dados_linha.columns:
+                extensao_total = dados_linha['Progressiva'].max() - dados_linha['Progressiva'].min()
+                logger.info(f"Extensão total da linha: {extensao_total/1000:.1f} km")
             
-            logger.info(f"Dados da linha carregados: {len(dados_linha)} pontos")
             return dados_linha
             
         except FileNotFoundError:
@@ -129,11 +128,22 @@ class DataLoader:
             try:
                 df_estacao = self._processar_arquivo_estacao(file_path, station_name)
                 if df_estacao is not None and not df_estacao.empty:
-                    dados_estacoes[station_name] = df_estacao
-                    arquivos_processados += 1
-                    logger.info(f"Estação {station_name}: {len(df_estacao)} registros válidos")
+                    # Aplicar validação robusta
+                    df_validado, relatorio = self.validator.validar_dados_meteorologicos(
+                        df_estacao, station_name
+                    )
+                    
+                    if not df_validado.empty:
+                        dados_estacoes[station_name] = df_validado
+                        self.relatorios_validacao.append(relatorio)
+                        arquivos_processados += 1
+                        logger.info(f"Estação {station_name}: {len(df_validado)} registros válidos "
+                                   f"(taxa: {relatorio['taxa_aproveitamento']:.1%})")
+                    else:
+                        logger.warning(f"Estação {station_name}: nenhum registro válido após validação")
+                        arquivos_com_erro += 1
                 else:
-                    logger.warning(f"Estação {station_name}: nenhum registro válido")
+                    logger.warning(f"Estação {station_name}: nenhum registro carregado")
                     arquivos_com_erro += 1
                     
             except Exception as e:
@@ -367,3 +377,77 @@ class DataLoader:
             }
         
         return resumo
+
+    def obter_relatorio_qualidade_dados(self):
+        """
+        Retorna relatório detalhado da qualidade dos dados carregados.
+        
+        Returns:
+            dict: Relatório consolidado de qualidade
+        """
+        if not self.relatorios_validacao:
+            return {'erro': 'Nenhum relatório de validação disponível'}
+        
+        return self.validator.gerar_relatorio_qualidade(self.relatorios_validacao)
+    
+    def exportar_relatorio_qualidade(self, caminho_arquivo: str):
+        """
+        Exporta relatório de qualidade para arquivo CSV.
+        
+        Args:
+            caminho_arquivo: Caminho para salvar o relatório
+        """
+        relatorio = self.obter_relatorio_qualidade_dados()
+        
+        if 'erro' in relatorio:
+            logger.warning(f"Não foi possível exportar relatório: {relatorio['erro']}")
+            return
+        
+        try:
+            # Converter relatório para DataFrame
+            dados_relatorio = []
+            
+            # Resumo geral
+            resumo = relatorio['resumo_geral']
+            for chave, valor in resumo.items():
+                dados_relatorio.append({
+                    'categoria': 'resumo_geral',
+                    'subcategoria': chave,
+                    'valor': valor,
+                    'descricao': ''
+                })
+            
+            # Problemas por tipo
+            for tipo_problema, quantidade in relatorio['problemas_por_tipo'].items():
+                dados_relatorio.append({
+                    'categoria': 'problemas',
+                    'subcategoria': tipo_problema,
+                    'valor': quantidade,
+                    'descricao': f'{quantidade} ocorrências de {tipo_problema}'
+                })
+            
+            # Completude por variável
+            for variavel, completude in relatorio['completude_por_variavel'].items():
+                dados_relatorio.append({
+                    'categoria': 'completude',
+                    'subcategoria': variavel,
+                    'valor': completude,
+                    'descricao': f'{completude:.1%} de completude'
+                })
+            
+            # Recomendações
+            for i, recomendacao in enumerate(relatorio['recomendacoes']):
+                dados_relatorio.append({
+                    'categoria': 'recomendacoes',
+                    'subcategoria': f'recomendacao_{i+1}',
+                    'valor': '',
+                    'descricao': recomendacao
+                })
+            
+            df_relatorio = pd.DataFrame(dados_relatorio)
+            df_relatorio.to_csv(caminho_arquivo, index=False, encoding='utf-8')
+            logger.info(f"Relatório de qualidade exportado para: {caminho_arquivo}")
+            
+        except Exception as e:
+            logger.error(f"Erro ao exportar relatório de qualidade: {e}")
+            raise

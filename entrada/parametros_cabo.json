@@ -1,7 +1,30 @@
 {
-  "diametro": 0.0277,
-  "resistencia_ac_25": 0.000111,
-  "resistencia_ac_75": 0.000133,
+  "nome_condutor": "ACSR 795 Drake",
+  "descricao": "Condutor de alumínio com alma de aço - 795 kcmil",
+  "diametro": 0.02814,
+  "resistencia_ac_25": 7.28e-5,
+  "resistencia_ac_75": 9.09e-5,
   "emissividade": 0.8,
-  "absortividade": 0.8
+  "absortividade": 0.8,
+  "temperatura_maxima_operacao": 75,
+  "capacidade_termica": 385,
+  "coeficiente_expansao_termica": 1.9e-5,
+  "observacoes": {
+    "fonte_dados": "IEEE 738-2012 Standard for Calculating the Current-Temperature Relationship of Bare Overhead Conductors",
+    "aplicacao": "Linha de transmissão 230 kV",
+    "material_alma": "Aço galvanizado",
+    "material_camadas": "Alumínio liga 1350-H19",
+    "numero_fios": {
+      "alma_aco": 7,
+      "camadas_aluminio": 26
+    },
+    "resistencia_dc_20": 6.8e-5,
+    "temperatura_annealing": 200,
+    "nota_resistencia": "Resistência AC inclui efeito pelicular e proximidade"
+  },
+  "validacao": {
+    "data_validacao": "2024-01-15",
+    "responsavel": "Engenheiro de Sistemas de Potência",
+    "versao_parametros": "1.0"
+  }
 }
